@@ -1,72 +1,225 @@
+import CasePaths
+import Combine
 import SwiftUI
 
 // MARK: Domain
 
-enum ExclusiveFeaturesState {
-  case featureOne(FeatureOneState)
-  case featureTwo(FeatureTwoState)
+enum AppState: Equatable {
+  case featureOne(FeatureState)
+  case featureTwo(FeatureState)
+  case featureThree(FeatureState)
 }
 
-struct FeatureOneState: Equatable {
-  let title = "Feature One"
+enum AppAction: Equatable {
+  case featureOne(FeatureAction)
+  case featureTwo(FeatureAction)
+  case featureThree(FeatureAction)
+  case toggleFeatureOne
+  case toggleFeatureTwo
+  case toggleFeatureThree
 }
 
-struct FeatureTwoState: Equatable {
-  let title = "Feature Two"
+struct FeatureState: Equatable {
+  let title: String
 }
+
+enum FeatureAction: Equatable {
+    case someAction
+}
+
+let appReducer = Reducer<AppState, AppAction, Void> { state, action, _ in
+  switch action {
+  case .toggleFeatureOne:
+    state = .featureOne(.init(title: "Feature One"))
+  case .toggleFeatureTwo:
+    state = .featureTwo(.init(title: "Feature Two"))
+  case .toggleFeatureThree:
+    state = .featureThree(.init(title: "Feature Three"))
+  default:
+    break
+  }
+  return .none
+}.debug()
 
 // MARK: Feature Views
 
-struct FeatureOneView: View {
-  let store: Store<FeatureOneState, Never>
+struct FeatureView: View {
+  let store: Store<FeatureState, FeatureAction>
 
   var body: some View {
     WithViewStore(store) { Text($0.title) }
   }
 }
 
-struct FeatureTwoView: View {
-  let store: Store<FeatureTwoState, Never>
+// MARK: SwitchStore
+
+struct SwitchStore<State, Action>: View where State: Equatable {
+  let caseStore: CaseStore<State, Action>
+  let content: AnyView
+
+  private init(
+    _ store: Store<State, Action>,
+    removeDuplicates isDuplicate: @escaping (State, State) -> Bool,
+    @ViewBuilder _ content: () -> AnyView
+  ) {
+    self.caseStore = CaseStore(store, removeDuplicates: isDuplicate)
+    self.content = content()
+  }
 
   var body: some View {
-    WithViewStore(store) { Text($0.title) }
+    content.environmentObject(caseStore)
   }
 }
 
-// MARK: Using IfLetStore
+extension SwitchStore where State: Equatable {
+  private init(
+    _ store: Store<State, Action>,
+    @ViewBuilder _ content: () -> AnyView
+  ) {
+    self.init(store, removeDuplicates: ==, content)
+  }
+}
 
-struct ExclusiveFeatureView_IfLet: View {
-  let store: Store<ExclusiveFeaturesState, Void>
+extension SwitchStore {
+  public init<
+    StateA, ActionA, ContentA,
+    StateB, ActionB, ContentB
+  >(
+    _ store: Store<State, Action>,
+    @ViewBuilder content: () -> TupleView<
+      (CaseLet<State, Action, StateA, ActionA, ContentA>,
+       CaseLet<State, Action, StateB, ActionB, ContentB>)
+    >
+  ) {
+    self.init(store) { AnyView(content()) }
+  }
 
-  var body: some View {
-    Group {
-      IfLetStore(
-        store.scope(state: /ExclusiveFeaturesState.featureOne).actionless,
-        then: FeatureOneView.init(store:)
-      )
-      IfLetStore(
-        store.scope(state: /ExclusiveFeaturesState.featureTwo).actionless,
-        then: FeatureTwoView.init(store:)
-      )
+  public init<
+    StateA, ActionA, ContentA,
+    StateB, ActionB, ContentB,
+    StateC, ActionC, ContentC
+  >(
+    _ store: Store<State, Action>,
+    @ViewBuilder content: () -> TupleView<
+      (CaseLet<State, Action, StateA, ActionA, ContentA>,
+       CaseLet<State, Action, StateB, ActionB, ContentB>,
+       CaseLet<State, Action, StateC, ActionC, ContentC>)
+    >
+  ) {
+    self.init(store) { AnyView(content()) }
+  }
+}
+
+class CaseStore<State, Action>: ObservableObject {
+  private let store: Store<State, Action>
+  private let publisher: StorePublisher<State>
+  private var caseCancellable: AnyCancellable?
+
+  // N.B. `ViewStore` does not use a `@Published` property, so `objectWillChange`
+  // won't be synthesized automatically. To work around issues on iOS 13 we explicitly declare it.
+  public private(set) lazy var objectWillChange = ObservableObjectPublisher()
+
+  /// Initializes a view store from a store.
+  ///
+  /// - Parameters:
+  ///   - store: A store.
+  ///   - isDuplicate: A function to determine when two `State` values are equal. When values are
+  ///     equal, repeat view computations are removed.St
+  public init(
+    _ store: Store<State, Action>,
+    removeDuplicates isDuplicate: @escaping (State, State) -> Bool
+  ) {
+    self.store = store
+    let publisher = store.state.removeDuplicates(by: isDuplicate)
+    self.publisher = StorePublisher(publisher)
+    self.caseCancellable = publisher.sink { [weak self] _ in
+      self?.objectWillChange.send()
+    }
+  }
+
+  func ifCase<LocalState, LocalAction, Result>(
+    state path: OptionalPath<State, LocalState>,
+    action fromLocalAction: @escaping (LocalAction) -> Action,
+    transform: (Store<LocalState, LocalAction>) -> Result
+  ) -> Result? {
+    path.extract(from: store.state.value).map { state in
+      transform(store.scope(state: { _ in state }, action: fromLocalAction))
     }
   }
 }
 
-// MARK: Using SwitchStore
+extension CaseStore where State: Equatable {
+  convenience init(_ store: Store<State, Action>) {
+    self.init(store, removeDuplicates: ==)
+  }
+}
 
-struct ExclusiveFeatureView_SwitchLet: View {
-  let store: Store<ExclusiveFeaturesState, Void>
+struct CaseLet<
+  GlobalState,
+  GlobalAction,
+  LocalState,
+  LocalAction,
+  Content
+>: View where Content: View {
+  @EnvironmentObject
+  var caseStore: CaseStore<GlobalState, GlobalAction>
+
+  let toLocalState: CasePath<GlobalState, LocalState>
+  let fromLocalAction: (LocalAction) -> GlobalAction
+  let content: (Store<LocalState, LocalAction>) -> Content
+
+  init(
+    state toLocalState: CasePath<GlobalState, LocalState>,
+    action fromLocalAction: @escaping (LocalAction) -> GlobalAction,
+    then content: @escaping (Store<LocalState, LocalAction>) -> Content
+  ) {
+    self.toLocalState = toLocalState
+    self.fromLocalAction = fromLocalAction
+    self.content = content
+  }
 
   var body: some View {
-    Group {
-      IfLetStore(
-        store.scope(state: /ExclusiveFeaturesState.featureOne).actionless,
-        then: FeatureOneView.init(store:)
+    caseStore.ifCase(
+      state: OptionalPath(toLocalState),
+      action: fromLocalAction,
+      transform: content
+    )
+  }
+}
+
+// MARK: Example View
+
+struct FeaturesView_SwitchCaseLet: View {
+  let store: Store<AppState, AppAction>
+  let delayedAction: AppAction
+
+  init(store: Store<AppState, AppAction>, afterDelaySend action: AppAction) {
+    self.store = store
+    self.delayedAction = action
+  }
+
+  var body: some View {
+    SwitchStore(store) {
+      CaseLet(
+        state: /AppState.featureOne,
+        action: AppAction.featureOne,
+        then: FeatureView.init(store:)
       )
-      IfLetStore(
-        store.scope(state: /ExclusiveFeaturesState.featureTwo).actionless,
-        then: FeatureTwoView.init(store:)
+      CaseLet(
+        state: /AppState.featureTwo,
+        action: AppAction.featureTwo,
+        then: FeatureView.init(store:)
       )
+      CaseLet(
+        state: /AppState.featureThree,
+        action: AppAction.featureThree,
+        then: FeatureView.init(store:)
+      )
+    }
+    .onAppear {
+      DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+        ViewStore(store).send(delayedAction)
+      }
     }
   }
 }
@@ -76,33 +229,29 @@ struct ExclusiveFeatureView_SwitchLet: View {
 struct ExclusiveFeatureState_Previews: PreviewProvider {
   static var previews: some View {
     Group {
-      ExclusiveFeatureView_IfLet(
+      FeaturesView_SwitchCaseLet(
         store: Store(
-          initialState: .featureOne(.init()),
-          reducer: .empty,
+          initialState: .featureOne(.init(title: "Feature One")),
+          reducer: appReducer,
           environment: ()
-        )
+        ),
+        afterDelaySend: .toggleFeatureTwo
       )
-      ExclusiveFeatureView_IfLet(
+      FeaturesView_SwitchCaseLet(
         store: Store(
-          initialState: .featureTwo(.init()),
-          reducer: .empty,
+          initialState: .featureTwo(.init(title: "Feature Two")),
+          reducer: appReducer,
           environment: ()
-        )
+        ),
+        afterDelaySend: .toggleFeatureThree
       )
-      ExclusiveFeatureView_SwitchLet(
+      FeaturesView_SwitchCaseLet(
         store: Store(
-          initialState: .featureOne(.init()),
-          reducer: .empty,
+          initialState: .featureThree(.init(title: "Feature Three")),
+          reducer: appReducer,
           environment: ()
-        )
-      )
-      ExclusiveFeatureView_SwitchLet(
-        store: Store(
-          initialState: .featureTwo(.init()),
-          reducer: .empty,
-          environment: ()
-        )
+        ),
+        afterDelaySend: .toggleFeatureOne
       )
     }
   }
