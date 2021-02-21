@@ -53,14 +53,14 @@ struct FeatureView: View {
 
 // MARK: SwitchStore
 
-struct SwitchStore<State, Action>: View where State: Equatable {
+struct SwitchStore<State, Action, Cases>: View where State: Equatable {
   let caseStore: CaseStore<State, Action>
-  let content: AnyView
+  let content: TupleView<Cases>
 
   private init(
     _ store: Store<State, Action>,
     removeDuplicates isDuplicate: @escaping (State, State) -> Bool,
-    @ViewBuilder _ content: () -> AnyView
+    @ViewBuilder _ content: () -> TupleView<Cases>
   ) {
     self.caseStore = CaseStore(store, removeDuplicates: isDuplicate)
     self.content = content()
@@ -74,7 +74,7 @@ struct SwitchStore<State, Action>: View where State: Equatable {
 extension SwitchStore where State: Equatable {
   private init(
     _ store: Store<State, Action>,
-    @ViewBuilder _ content: () -> AnyView
+    @ViewBuilder _ content: () -> TupleView<Cases>
   ) {
     self.init(store, removeDuplicates: ==, content)
   }
@@ -82,16 +82,27 @@ extension SwitchStore where State: Equatable {
 
 extension SwitchStore {
   public init<
+    StateA, ActionA, ContentA
+  >(
+    _ store: Store<State, Action>,
+    @ViewBuilder content: () -> Cases
+  )
+  where Cases == CaseLet<State, Action, StateA, ActionA, ContentA> {
+    self.init(store, { TupleView(content()) })
+  }
+
+  public init<
     StateA, ActionA, ContentA,
     StateB, ActionB, ContentB
   >(
     _ store: Store<State, Action>,
-    @ViewBuilder content: () -> TupleView<
-      (CaseLet<State, Action, StateA, ActionA, ContentA>,
-       CaseLet<State, Action, StateB, ActionB, ContentB>)
-    >
+    @ViewBuilder content: () -> TupleView<Cases>
+  )
+  where Cases == (
+    CaseLet<State, Action, StateA, ActionA, ContentA>,
+    CaseLet<State, Action, StateB, ActionB, ContentB>
   ) {
-    self.init(store) { AnyView(content()) }
+    self.init(store) { content() }
   }
 
   public init<
@@ -100,13 +111,14 @@ extension SwitchStore {
     StateC, ActionC, ContentC
   >(
     _ store: Store<State, Action>,
-    @ViewBuilder content: () -> TupleView<
-      (CaseLet<State, Action, StateA, ActionA, ContentA>,
-       CaseLet<State, Action, StateB, ActionB, ContentB>,
-       CaseLet<State, Action, StateC, ActionC, ContentC>)
-    >
+    @ViewBuilder content: () -> TupleView<Cases>
+  )
+  where Cases == (
+    CaseLet<State, Action, StateA, ActionA, ContentA>,
+    CaseLet<State, Action, StateB, ActionB, ContentB>,
+    CaseLet<State, Action, StateC, ActionC, ContentC>
   ) {
-    self.init(store) { AnyView(content()) }
+    self.init(store) { content() }
   }
 }
 
