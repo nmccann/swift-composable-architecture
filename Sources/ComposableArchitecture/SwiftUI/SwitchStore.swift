@@ -53,7 +53,7 @@ struct FeatureView: View {
 
 // MARK: SwitchStore
 
-struct SwitchStore<State, Action, Cases>: View where State: Equatable {
+public struct SwitchStore<State, Action, Cases>: View where State: Equatable {
   let caseStore: CaseStore<State, Action>
   let content: TupleView<Cases>
 
@@ -66,7 +66,7 @@ struct SwitchStore<State, Action, Cases>: View where State: Equatable {
     self.content = content()
   }
 
-  var body: some View {
+  public var body: some View {
     content.environmentObject(caseStore)
   }
 }
@@ -80,8 +80,8 @@ extension SwitchStore where State: Equatable {
   }
 }
 
-extension SwitchStore {
-  public init<
+public extension SwitchStore {
+  init<
     StateA, ActionA, ContentA
   >(
     _ store: Store<State, Action>,
@@ -91,7 +91,7 @@ extension SwitchStore {
     self.init(store, { TupleView(content()) })
   }
 
-  public init<
+  init<
     StateA, ActionA, ContentA,
     StateB, ActionB, ContentB
   >(
@@ -105,7 +105,7 @@ extension SwitchStore {
     self.init(store) { content() }
   }
 
-  public init<
+  init<
     StateA, ActionA, ContentA,
     StateB, ActionB, ContentB,
     StateC, ActionC, ContentC
@@ -166,7 +166,7 @@ extension CaseStore where State: Equatable {
   }
 }
 
-struct CaseLet<
+public struct CaseLet<
   GlobalState,
   GlobalAction,
   LocalState,
@@ -180,7 +180,7 @@ struct CaseLet<
   let fromLocalAction: (LocalAction) -> GlobalAction
   let content: (Store<LocalState, LocalAction>) -> Content
 
-  init(
+  public init(
     state toLocalState: CasePath<GlobalState, LocalState>,
     action fromLocalAction: @escaping (LocalAction) -> GlobalAction,
     then content: @escaping (Store<LocalState, LocalAction>) -> Content
@@ -190,7 +190,7 @@ struct CaseLet<
     self.content = content
   }
 
-  var body: some View {
+  public var body: some View {
     caseStore.ifCase(
       state: OptionalPath(toLocalState),
       action: fromLocalAction,
